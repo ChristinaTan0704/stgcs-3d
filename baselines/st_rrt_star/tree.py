@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Tuple, List, Dict, Set
+from typing import Tuple, List, Dict, Set, Optional
 from matplotlib.axes import Axes
 from collections import defaultdict
 import numpy as np
@@ -113,7 +113,7 @@ class Tree:
                 x_nearest = (c, node)
         return x_nearest[1]
     
-    def extend(self, x:State, env:Env, epsilon:float, vlimit:float, lambda_nn:float) -> Tuple[GrowState, TreeNode|None]:
+    def extend(self, x:State, env:Env, epsilon:float, vlimit:float, lambda_nn:float) -> Tuple[GrowState, Optional[TreeNode]]:
         node_near = self.nearest_neighbor(x, vlimit, lambda_nn)
         if node_near is None:
             return GrowState.TRAPPED, None

@@ -58,12 +58,8 @@ class Polyhedron(ConvexSet):
             self._h = h
 
             # Compute center
-            try:
-                max_ellipsoid = self._h_polyhedron.MaximumVolumeInscribedEllipsoid()
-                self._center = np.array(max_ellipsoid.center())
-            except:
-                logger.warning("Could not compute center")
-                self._center = None
+            max_ellipsoid = self._h_polyhedron.MaximumVolumeInscribedEllipsoid()
+            self._center = np.array(max_ellipsoid.center())
         
         self._nullspace_set = None
         # self.create_nullspace_set()

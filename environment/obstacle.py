@@ -75,7 +75,10 @@ class StaticPolygon(StaticObstacle):
 
     def __init__(self, vertices:np.ndarray) -> None:
         self.vertices = vertices
-        self.hpoly = HPolyhedron(VPolytope(vertices.T))
+        # Convert vertices to HPolyhedron using scipy ConvexHull (compatible with older pydrake)
+        from scipy.spatial import ConvexHull
+        ch = ConvexHull(vertices)
+        self.hpoly = HPolyhedron(ch.equations[:, :-1], -ch.equations[:, -1])
     
     def is_colliding(self, point:np.ndarray, robot_radius:float) -> bool:
         assert len(point) == 2

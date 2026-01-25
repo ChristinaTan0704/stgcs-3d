@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Tuple, Set, List
+from typing import Tuple, Set, List, Optional
 from dataclasses import dataclass
 
 import time
@@ -165,7 +165,7 @@ class STRRTStar:
         
         return B
 
-    def sample_conditionally(self, x_start:State, B:BoundVariables, P:Options, ts:float) -> State|None:
+    def sample_conditionally(self, x_start:State, B:BoundVariables, P:Options, ts:float) -> Optional[State]:
         t_lb = t_ub = 0.0
         while t_lb >= t_ub:
             if P.use_CSpace_sampling:
@@ -263,7 +263,7 @@ class STRRTStar:
         return sol_opt[1]
 
     def update_solution(
-        self, sol_opt:List[State]|None, t_max:float, sol:List[State], T_start:Tree, T_goal:Tree, B:BoundVariables, P:Options
+        self, sol_opt:Optional[List[State]], t_max:float, sol:List[State], T_start:Tree, T_goal:Tree, B:BoundVariables, P:Options
     ) -> Tuple[float, List[State]]: 
         if sol_opt is None or sol[-1].time < sol_opt[-1].time:
             # print(f"Found a better solution with arrival time {sol[-1].time}")

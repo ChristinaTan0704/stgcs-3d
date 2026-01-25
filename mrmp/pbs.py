@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from copy import deepcopy
 from itertools import combinations, product
 
@@ -63,7 +63,7 @@ class Node:
 
         return True
 
-    def get_child(self, i:int, j:int) -> Node|None:
+    def get_child(self, i:int, j:int) -> Optional[Node]:
         G = self.dg.copy()
         G.add_edge(i, j)
         if nx.is_directed_acyclic_graph(G):
@@ -81,7 +81,7 @@ class Node:
 
         return None
 
-    def find_first_conflict(self, num_agents:int, robot_radius:float, tmin:float, tmax:float) -> Tuple[int|None, int|None]:
+    def find_first_conflict(self, num_agents:int, robot_radius:float, tmin:float, tmax:float) -> Tuple[Optional[int], Optional[int]]:
         for i, j in combinations(range(num_agents), 2):
             if (i, j) not in self.dg.edges and (j, i) not in self.dg.edges and \
                 collision_checking(self.sols[i].trajectory, self.sols[j].trajectory, robot_radius, tmin, tmax):

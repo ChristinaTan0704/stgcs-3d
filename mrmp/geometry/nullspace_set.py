@@ -2,7 +2,7 @@ import logging
 import multiprocessing
 
 import numpy as np
-from pydrake.all import AffineSubspace, ClpSolver
+from pydrake.all import ClpSolver
 from pydrake.all import ConvexSet as DrakeConvexSet
 from pydrake.all import HPolyhedron, MathematicalProgram
 from pydrake.all import Point as DrakePoint
@@ -55,15 +55,10 @@ class NullspaceSet(ConvexSet):
                 future = pool.apply_async(
                     cls.reduce_inequalities, args=(A_prime, b_prime)
                 )
-                try:
-                    A_prime, b_prime = future.get(timeout=60)
-                    reduce_inequalties_succeeded = True
-                except multiprocessing.TimeoutError as e:
-                    reduce_inequalties_succeeded = False
-                    logger.error(f"Timeout error for reduce_inequalities: {e}")
-                finally:
-                    pool.terminate()
-                    pool.join()
+                A_prime, b_prime = future.get(timeout=60)
+                reduce_inequalties_succeeded = True
+                pool.terminate()
+                pool.join()
             # logger.debug(f"A_prime after: {self._set.A().shape}")
         hpoly = HPolyhedron(A_prime, b_prime)
         ns_set = cls(hpoly)

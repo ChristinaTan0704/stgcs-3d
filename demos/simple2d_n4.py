@@ -30,6 +30,6 @@ if __name__ == "__main__":
     print("SoC", sum([p.cost for p in sol]), "makespan", max([p.itvl.end for p in sol]))
 
     fig, ax = plt.subplots()
-    env.animate_2d(ax, sol, draw_CSpace=True, save_anim=True)
+    env.animate_2d(ax, sol, draw_CSpace=True, save_anim=False)
     plt.show()
 

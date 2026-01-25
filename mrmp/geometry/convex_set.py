@@ -43,24 +43,19 @@ class ConvexSet(ABC):
         # Setting the initial guess made sampling in the contact set fail
         # initial_guess = self.set.MaybeGetFeasiblePoint()
         # logger.debug(f"Initial guess for sampling: {initial_guess}")
-        try:
-            # samples.append(self.set.UniformSample(generator, initial_guess))
-            samples.append(self.set.UniformSample(generator))
-            logger.debug(f"Sampled 1 points from convex set")
-            for i in range(n_samples - 1):
-                samples.append(
-                    self.set.UniformSample(
-                        # 500
-                        generator,
-                        previous_sample=samples[-1],
-                        mixing_steps=100,
-                    )
+        # samples.append(self.set.UniformSample(generator, initial_guess))
+        samples.append(self.set.UniformSample(generator))
+        logger.debug(f"Sampled 1 points from convex set")
+        for i in range(n_samples - 1):
+            samples.append(
+                self.set.UniformSample(
+                    # 500
+                    generator,
+                    previous_sample=samples[-1],
+                    mixing_steps=100,
                 )
-                logger.debug(f"Sampled {i+2} points from convex set")
-        except (RuntimeError, ValueError) as e:
-            chebyshev_center = self.set.ChebyshevCenter()
-            logger.warn("Failed to sample convex set" f"\n{e}")
-            return np.array([chebyshev_center])
+            )
+            logger.debug(f"Sampled {i+2} points from convex set")
         return np.array(samples)
 
     @property

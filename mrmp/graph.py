@@ -16,9 +16,7 @@ from pydrake.all import (
     Constraint,
     Cost,
     GraphOfConvexSets,
-    GraphOfConvexSetsOptions,
     MathematicalProgramResult,
-    Parallelism,
     SolverOptions,
     MosekSolver, CommonSolverOption
 )
@@ -432,22 +430,18 @@ class Graph:
         assert self._source_name is not None
         assert self._target_name is not None
         
-        options = GraphOfConvexSetsOptions()
         solver_options = SolverOptions()
         solver_options.SetOption(CommonSolverOption.kPrintToConsole, 1)
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_INTPNT_CO_TOL_REL_GAP", 1e-3)
         solver_options.SetOption(MosekSolver.id(), "MSK_IPAR_INTPNT_SOLVE_FORM", 1)
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_TOL_REL_GAP", 1e-3)
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_MAX_TIME", 3600.0)
-        options.convex_relaxation = True
-        options.preprocessing = False
-
-        options.max_rounded_paths = max_rounded_paths
-        options.max_rounding_trials = max_rounding_trials
+        
         rounded_result = self._gcs.SolveShortestPath(
             self.vertices[self._source_name].gcs_vertex,
             self.vertices[self._target_name].gcs_vertex,
-            options
+            convex_relaxation=True,
+            solver_options=solver_options
         )
         sol = self._parse_result(rounded_result)
         self._post_solve(sol)
@@ -457,20 +451,18 @@ class Graph:
         assert self._source_name is not None
         assert self._target_name is not None
         
-        options = GraphOfConvexSetsOptions()
         solver_options = SolverOptions()
         solver_options.SetOption(CommonSolverOption.kPrintToConsole, 1)
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_INTPNT_CO_TOL_REL_GAP", 1e-3)
         solver_options.SetOption(MosekSolver.id(), "MSK_IPAR_INTPNT_SOLVE_FORM", 1)
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_TOL_REL_GAP", 1e-3)
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_MAX_TIME", 3600.0)
-        options.convex_relaxation = False
-        options.preprocessing = False
-
+        
         rounded_result = self._gcs.SolveShortestPath(
             self.vertices[self._source_name].gcs_vertex,
             self.vertices[self._target_name].gcs_vertex,
-            options
+            convex_relaxation=False,
+            solver_options=solver_options
         )
         sol = self._parse_result(rounded_result)
         self._post_solve(sol)
@@ -567,7 +559,7 @@ class Graph:
 
         all_results: List[MathematicalProgramResult] = (
             self._gcs.SolveConvexRestrictions(
-                active_edges=gcs_paths, parallelism=Parallelism(True)
+                active_edges=gcs_paths
             )
         )
 

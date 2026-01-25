@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict, Set
+from typing import List, Tuple, Dict, Set, Union, Optional
 import os, time
 from functools import wraps
 
@@ -18,14 +18,29 @@ from pydrake.all import (
 
 
 """ setup mosek solver """
-solver = MosekSolver()
-solver_options = SolverOptions()
-solver_options.SetOption(CommonSolverOption.kPrintToConsole, 1)
-solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_INTPNT_CO_TOL_REL_GAP", 1e-3)
-solver_options.SetOption(MosekSolver.id(), "MSK_IPAR_INTPNT_SOLVE_FORM", 1)
-solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_TOL_REL_GAP", 1e-3)
-solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_MAX_TIME", 3600.0)
-solver_options.SetOption(MosekSolver.id(), "MSK_IPAR_LOG", 0)
+if MosekSolver().available():
+    solver = MosekSolver()
+    solver_options = SolverOptions()
+    solver_options.SetOption(CommonSolverOption.kPrintToConsole, 1)
+    solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_INTPNT_CO_TOL_REL_GAP", 1e-3)
+    solver_options.SetOption(MosekSolver.id(), "MSK_IPAR_INTPNT_SOLVE_FORM", 1)
+    solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_TOL_REL_GAP", 1e-3)
+    solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_MAX_TIME", 3600.0)
+    solver_options.SetOption(MosekSolver.id(), "MSK_IPAR_LOG", 0)
+else:
+    from pydrake.all import ClpSolver
+    if ClpSolver().available():
+        solver = ClpSolver()
+        solver_options = SolverOptions()
+        solver_options.SetOption(CommonSolverOption.kPrintToConsole, 1)
+    else:
+        from pydrake.all import OsqpSolver
+        if OsqpSolver().available():
+            solver = OsqpSolver()
+            solver_options = SolverOptions()
+            solver_options.SetOption(CommonSolverOption.kPrintToConsole, 1)
+        else:
+            raise RuntimeError("No available solver found. Please install Mosek, Clp, or Osqp.")
 
 
 def timeit(func):
@@ -54,7 +69,7 @@ def make_hpolytope(V) -> HPolyhedron:
     return HPolyhedron(ch.equations[:, :-1], -ch.equations[:, -1])
 
 
-def time_extruded(hpoly:HPolyhedron, t0:float, tf:float) -> HPolyhedron|None:
+def time_extruded(hpoly:HPolyhedron, t0:float, tf:float) -> Optional[HPolyhedron]:
     if t0 < tf:
         return hpoly.CartesianProduct(HPolyhedron.MakeBox([t0], [tf]))
     
@@ -62,8 +77,8 @@ def time_extruded(hpoly:HPolyhedron, t0:float, tf:float) -> HPolyhedron|None:
 
 
 def get_hpoly_bounds(
-    hpoly:HPolyhedron, dim:int|List[int]
-) -> Tuple[np.ndarray|float, np.ndarray|float]:
+    hpoly:HPolyhedron, dim:Union[int, List[int]]
+) -> Tuple[Union[np.ndarray, float], Union[np.ndarray, float]]:
     num_dims = hpoly.ambient_dimension()
     prog = MathematicalProgram()
     xi = prog.NewContinuousVariables(num_dims, "x")
@@ -99,7 +114,7 @@ def get_hpoly_bounds(
 
 def find_space_time_intersecting_pts(
     hpoly:HPolyhedron, xp:np.ndarray, xq:np.ndarray, dim:int
-) -> Tuple[np.ndarray, np.ndarray]|None:
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     tp, tq = xp[-1], xq[-1]
 
     if tp == tq:
@@ -222,7 +237,7 @@ def squash_multi_points(hpoly:HPolyhedron, dim:int) -> HPolyhedron:
 
 """ visualization """
 
-def draw_2d_set(obj:np.ndarray|HPolyhedron, ax:Axes, color='k', marker='o', linestyle='-', alpha:float=0.3, label=False) -> None:
+def draw_2d_set(obj:Union[np.ndarray, HPolyhedron], ax:Axes, color='k', marker='o', linestyle='-', alpha:float=0.3, label=False) -> None:
     if isinstance(obj, HPolyhedron):
         obj = VPolytope(obj).vertices().T
 
@@ -244,7 +259,7 @@ def draw_2d_set(obj:np.ndarray|HPolyhedron, ax:Axes, color='k', marker='o', line
         ax.fill(verts[:, 0], verts[:, 1], f'{color}', ec='k', alpha=alpha)
             
 
-def draw_3d_set(obj:np.ndarray|HPolyhedron, ax:Axes3D, 
+def draw_3d_set(obj:Union[np.ndarray, HPolyhedron], ax:Axes3D, 
     alpha:float=0.5, fc='lightgray', ec='k', time_scaler:float=1.0) -> None:
     if isinstance(obj, HPolyhedron):
         obj = VPolytope(obj).vertices().T

@@ -120,7 +120,19 @@ class Env:
 
     def sample_CSpace(self, np_rng:np.random.RandomState, drake_rng:RandomGenerator) -> np.ndarray:
         idx = np_rng.randint(0, len(self.C_Space))
-        return self._CSpace_hpoly[idx].UniformSample(drake_rng)
+        hpoly = self._CSpace_hpoly[idx]
+        # Fallback: rejection sampling from C_Space vertices bounding box
+        vertices = self.C_Space[idx]
+        lb = np.min(vertices, axis=0)
+        ub = np.max(vertices, axis=0)
+        # Rejection sampling
+        max_trials = 1000
+        for _ in range(max_trials):
+            sample = np_rng.uniform(lb, ub)
+            if hpoly.PointInSet(sample):
+                return sample
+        # If rejection sampling fails, return Chebyshev center
+        return np.array(hpoly.ChebyshevCenter()).flatten()
     
     def sample_bounding_box(self, np_rng:np.random.RandomState) -> np.ndarray:
         return np_rng.uniform(self.lb, self.ub)

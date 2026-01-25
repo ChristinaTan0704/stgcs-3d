@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple, Dict, Set
+from typing import List, Tuple, Dict, Set, Optional
 from itertools import combinations, product
 from copy import deepcopy
 
@@ -109,7 +109,7 @@ class STGCS:
         self.G.add_vertex(vertex, name=name)
         return vertex
 
-    def try_add_vertex(self, hpoly:HPolyhedron, itvl:Interval, tol:float=1e-6) -> Vertex|None:
+    def try_add_vertex(self, hpoly:HPolyhedron, itvl:Interval, tol:float=1e-6) -> Optional[Vertex]:
         if itvl.duration <= tol:
             return
 

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List
+from typing import List, Optional
 from dataclasses import dataclass
 
 
@@ -30,7 +30,7 @@ class Interval:
     def intersects(self, other:Interval) -> bool:
         return not (self < other or self > other)
 
-    def intersection(self, other:Interval) -> Interval|None:
+    def intersection(self, other:Interval) -> Optional[Interval]:
         if self.intersects(other):
             return Interval(max(self.start, other.start), min(self.end, other.end))
         return None

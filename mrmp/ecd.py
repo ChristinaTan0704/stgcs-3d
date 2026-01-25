@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple, Dict, Set
+from typing import List, Tuple, Dict, Set, Optional
 from itertools import combinations, product
 from collections import defaultdict
 from dataclasses import dataclass
@@ -158,7 +158,7 @@ def generate_all_ECD_pairs(
     return ret
 
 
-def slice(hpoly:HPolyhedron|None, ecd_pairs:List[ECDPair], tlow:float, thigh:float) -> List[HPolyhedron]:    
+def slice(hpoly:Optional[HPolyhedron], ecd_pairs:List[ECDPair], tlow:float, thigh:float) -> List[HPolyhedron]:    
     # note: the ecd_pairs must be collected from a continuous piece-wise linear trajectory 
     #       otherwise the slicing would be incorrect 
     
@@ -212,7 +212,7 @@ def time_cropping_bot_top(dim:int, t_low:float, t_high:float) -> List[HPolyhedro
     return [bottom, top]
 
 
-def time_cropping_mid(hpoly:HPolyhedron, t_low:float, t_high:float) -> HPolyhedron|None:
+def time_cropping_mid(hpoly:HPolyhedron, t_low:float, t_high:float) -> Optional[HPolyhedron]:
     if t_low >= t_high:
         return None
 
