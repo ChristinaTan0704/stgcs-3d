@@ -208,18 +208,6 @@ elif dim == 4:  # ← NEW: 3D support
 
 The `split_region.py` script demonstrates how 3D space is partitioned when a moving obstacle (represented as a cube) travels through the environment. This visualization illustrates the core concept behind **Exclusion Constraint Decomposition (ECD)** used in STGCS for reserving space-time regions. When a robot or obstacle moves along a trajectory, the surrounding space is divided into **6 regions**: top, bottom, left, right, front, and back. Each frame shows the moving cube (orange) and the 6 partitioned regions (colored boxes) that represent how space is split to avoid collisions. This partitioning mechanism is what allows STGCS to create refined convex sets for collision-free path planning. Run `python split_region.py` to generate animation frames showing this space division process.
 
----
-
-## 📊 Summary of Core Changes
-
-| Component | 2D Support | 3D Support | Change Type |
-|-----------|------------|------------|-------------|
-| **STGCS Graph** | 3D (x, y, t) | 4D (x, y, z, t) | Automatic dimension detection |
-| **Collision Check** | `collision_checking_2d()` | `collision_checking_3d()` | New function + dispatcher |
-| **Waypoint Format** | 6 elements | 8 elements | Array slicing changes |
-| **Velocity Constraints** | 2 spatial dims | 3 spatial dims | Uses `dim-1` automatically |
-| **Space Bounds** | x, y bounds | x, y, z bounds | Extracts `dim-1` dimensions |
-| **Space Division** | 2 halfspaces (left/right) | 6 halfspaces (top/bottom/left/right/front/back) | New `parallelepiped_side_halfspace_3d()` |
 
 ## 🎯 Key Design Principles
 
