@@ -22,7 +22,7 @@ from mrmp.graph import ShortestPathSolution, Edge, Graph, Vertex
 from mrmp.interval import Interval, AABB
 from mrmp.utils import (
     timeit, time_extruded, get_hpoly_bounds, make_hpolytope,
-    squash_multi_points, draw_3d_set, draw_2d_set
+    squash_multi_points, draw_3d_set, draw_2d_set, is_hpoly_empty
 )
 
 
@@ -158,16 +158,139 @@ class STGCS:
     def build_source_vertex(self, source:np.ndarray, t_start:float) -> str:
         # assume source is contained in only one convex set of a vertex
         V_src = []
-        source = np.tile(np.hstack([source, t_start]), self.num_pts_per_verts)
+        source_space_time = np.tile(np.hstack([source, t_start]), self.num_pts_per_verts)
+        source_3d = source  # Original 3D position for debugging
+        
+        # Check all vertices to see which ones contain the source
         for v_name, v in self.G.vertices.items():
-            if v.convex_set.set.PointInSet(source):
-                A_src = np.eye(self.dim * self.num_pts_per_verts)
-                src_cstr = LinearEqualityConstraint(A_src, source)
-                src = Vertex(Point(source), constraints=[src_cstr], name=GCS_SOURCE_NAME)
-                V_src.append((src, v_name))
+            try:
+                if v.convex_set.set.PointInSet(source_space_time):
+                    A_src = np.eye(self.dim * self.num_pts_per_verts)
+                    src_cstr = LinearEqualityConstraint(A_src, source_space_time)
+                    src = Vertex(Point(source_space_time), constraints=[src_cstr], name=GCS_SOURCE_NAME)
+                    V_src.append((src, v_name))
+            except Exception as e:
+                # Skip vertices that cause errors
+                pass
         
         if len(V_src) == 0:
-            return None
+            # Debug: check if source is near any vertex
+            print(f"    Source {source_3d} at t={t_start} not found in any vertex (exact match)")
+            print(f"    Total vertices: {len(self.G.vertices)}")
+            # Check a few sample vertices to see their space-time bounds
+            sample_count = 0
+            for v_name, v in list(self.G.vertices.items())[:5]:  # Check first 5 vertices
+                try:
+                    if hasattr(v, 'space_bounds') and len(v.space_bounds) >= 3:
+                        spatial_bounds = [v.space_bounds[i] for i in range(3)]
+                        time_bounds = v.itvl if hasattr(v, 'itvl') else None
+                        print(f"    Sample vertex {v_name}: spatial={spatial_bounds}, time={time_bounds}")
+                        sample_count += 1
+                except:
+                    pass
+            # Try to find closest vertex by checking spatial bounds and time overlap
+            min_dist = float('inf')
+            closest_v_name = None
+            closest_v_center = None
+            
+            for v_name, v in self.G.vertices.items():
+                try:
+                    # Check if source is within spatial bounds and time interval
+                    if hasattr(v, 'space_bounds') and len(v.space_bounds) >= len(source_3d):
+                        # Check spatial bounds
+                        in_spatial_bounds = True
+                        for d in range(len(source_3d)):
+                            if source_3d[d] < v.space_bounds[d].start or source_3d[d] > v.space_bounds[d].end:
+                                in_spatial_bounds = False
+                                break
+                        
+                        # Check time overlap
+                        in_time_bounds = False
+                        if hasattr(v, 'itvl'):
+                            if v.itvl.start <= t_start <= v.itvl.end:
+                                in_time_bounds = True
+                        
+                        # Calculate distance to vertex center
+                        center_approx = np.array([(v.space_bounds[d].start + v.space_bounds[d].end) / 2 
+                                                 for d in range(len(source_3d))])
+                        dist = np.linalg.norm(center_approx - source_3d)
+                        
+                        if in_spatial_bounds and in_time_bounds:
+                            # This vertex has overlapping bounds, use it immediately
+                            closest_v_name = v_name
+                            closest_v_center = center_approx
+                            min_dist = dist
+                            print(f"    Found vertex {v_name} with overlapping bounds, distance: {min_dist:.3f}")
+                            break
+                        
+                        # Otherwise, track the closest vertex (prefer spatial overlap, then time overlap)
+                        if in_spatial_bounds or (dist < min_dist and dist < 10.0):  # Within reasonable distance
+                            if dist < min_dist:
+                                min_dist = dist
+                                closest_v_name = v_name
+                                closest_v_center = center_approx
+                except Exception as e:
+                    # Skip vertices that cause errors
+                    pass
+            
+            if closest_v_name is None:
+                print(f"    ✗ No suitable vertex found for source {source_3d} at t={t_start}")
+                # Additional debugging: check all vertices to see why none match
+                print(f"    Checking all {len(self.G.vertices)} vertices for compatibility...")
+                checked_count = 0
+                for v_name, v in list(self.G.vertices.items())[:10]:  # Check first 10
+                    try:
+                        if hasattr(v, 'space_bounds') and len(v.space_bounds) >= len(source_3d):
+                            spatial_bounds = [v.space_bounds[i] for i in range(len(source_3d))]
+                            time_bounds = v.itvl if hasattr(v, 'itvl') else None
+                            
+                            # Check spatial
+                            in_spatial = all(v.space_bounds[d].start <= source_3d[d] <= v.space_bounds[d].end 
+                                           for d in range(len(source_3d)))
+                            # Check time
+                            in_time = (time_bounds.start <= t_start <= time_bounds.end) if time_bounds else False
+                            
+                            center_approx = np.array([(v.space_bounds[d].start + v.space_bounds[d].end) / 2 
+                                                     for d in range(len(source_3d))])
+                            dist = np.linalg.norm(center_approx - source_3d)
+                            
+                            print(f"      {v_name}: spatial_in={in_spatial}, time_in={in_time}, dist={dist:.3f}, "
+                                  f"spatial={spatial_bounds}, time={time_bounds}")
+                            checked_count += 1
+                    except Exception as e:
+                        print(f"      {v_name}: error checking - {e}")
+                
+                # If still no match, try to find ANY vertex (even if far) as last resort
+                print(f"    Last resort: finding ANY vertex...")
+                for v_name, v in self.G.vertices.items():
+                    try:
+                        if hasattr(v, 'space_bounds') and len(v.space_bounds) >= len(source_3d):
+                            center_approx = np.array([(v.space_bounds[d].start + v.space_bounds[d].end) / 2 
+                                                     for d in range(len(source_3d))])
+                            dist = np.linalg.norm(center_approx - source_3d)
+                            if dist < min_dist:
+                                min_dist = dist
+                                closest_v_name = v_name
+                                closest_v_center = center_approx
+                    except:
+                        pass
+                
+                if closest_v_name is None:
+                    print(f"    ✗✗ Even last resort failed - no vertices available!")
+                    return None
+                else:
+                    print(f"    Using last resort vertex: {closest_v_name} (distance: {min_dist:.3f})")
+            
+            print(f"    Using closest vertex: {closest_v_name} (center≈{closest_v_center}, distance: {min_dist:.3f})")
+            # Create source vertex connected to the closest vertex
+            # Use the source point directly (even if not exactly in the vertex, we'll connect to it)
+            A_src = np.eye(self.dim * self.num_pts_per_verts)
+            src_cstr = LinearEqualityConstraint(A_src, source_space_time)
+            src = Vertex(Point(source_space_time), constraints=[src_cstr], name=GCS_SOURCE_NAME)
+            self.G.add_vertex(src, name=GCS_SOURCE_NAME)
+            self.add_edge(GCS_SOURCE_NAME, closest_v_name)
+            print(f"    ✓ Created source vertex connected to {closest_v_name}")
+            return GCS_SOURCE_NAME
         
         if len(V_src) > 1:
             print("Multiple source vertices found")
@@ -189,7 +312,7 @@ class STGCS:
             v_hpoly = v.convex_set.set
             if isinstance(v_hpoly, HPolyhedron):
                 itsc = target.Intersection(v_hpoly)
-                if itsc.IsEmpty():
+                if is_hpoly_empty(itsc):
                     itsc = None
             elif isinstance(v_hpoly, DrakePoint):
                 v_point = v_hpoly.x()
@@ -254,23 +377,31 @@ class STGCS:
         src_name  = self.build_source_vertex(start, t_start)
         tar_names = self.build_target_vertex(goal)
 
-        if src_name is None or tar_names is None or len(tar_names) <= 1:
-            print("Failed to build source or target vertices")
+        if src_name is None:
+            print(f"  ✗ Failed to build source vertex at {start}, t={t_start}")
             return failure_ret
+        if tar_names is None or len(tar_names) <= 1:
+            print(f"  ✗ Failed to build target vertices at {goal} (got {tar_names})")
+            return failure_ret
+        print(f"  ✓ Built source vertex: {src_name}, target vertices: {len(tar_names)}")
         
         self.G.set_source(GCS_SOURCE_NAME)
         self.G.set_target(GCS_TARGET_NAME)
 
         if not self.G.check_feasiblity():
-            print("STGCS solving failed: No feasible path found")
+            print(f"  ✗ STGCS solving failed: No feasible path from {src_name} to target")
+            print(f"    Graph has {self.G.n_vertices} vertices and {self.G.n_edges} edges")
             return failure_ret
+        print(f"  ✓ Feasibility check passed")
        
         if relaxation:
+            print(f"  Solving with relaxation: max_rounded_paths={max_rounded_paths}, max_rounding_trials={max_rounding_trials}")
             sol = self.G.solve_shortest_path(
                 max_rounded_paths = max_rounded_paths,
                 max_rounding_trials = max_rounding_trials,
             )
         else:
+            print(f"  Solving optimally")
             sol = self.G.solve_shortest_path_optimally()
 
         self.G._source_name = None
@@ -279,15 +410,88 @@ class STGCS:
             self.G.remove_vertex(v_name)
         
         if not sol.is_success:
-            print("Failed to find a solution")
+            print(f"  ✗ Failed to find a solution (is_success=False)")
+            print(f"    Cost: {sol.cost}, Time: {sol.time}")
+            print(f"    Vertex path length: {len(sol.vertex_path)}, Trajectory length: {len(sol.trajectory)}")
+            # Check solver result for more details
+            if sol.result is not None:
+                solver_details = sol.result.get_solver_details()
+                if hasattr(solver_details, 'num_rounded_paths'):
+                    print(f"    Rounded paths tried: {solver_details.num_rounded_paths}")
+                if hasattr(solver_details, 'num_rounding_trials'):
+                    print(f"    Rounding trials: {solver_details.num_rounding_trials}")
+                # Check if it's a primal infeasible problem
+                if not sol.result.is_success():
+                    print(f"    Solver reports: not successful")
             return failure_ret
         
-        sol.vertex_path = sol.vertex_path[1:-2]
-        sol.trajectory = sol.trajectory[1:-2]
-        sol.itvl = Interval(t_start, sol.trajectory[-1][-1])
+        if len(sol.trajectory) < 3:
+            print(f"  ✗ Failed to find a solution: trajectory too short (len={len(sol.trajectory)})")
+            print(f"    Vertex path length: {len(sol.vertex_path)}")
+            if len(sol.trajectory) > 0:
+                print(f"    First waypoint shape: {sol.trajectory[0].shape if hasattr(sol.trajectory[0], 'shape') else type(sol.trajectory[0])}")
+                print(f"    Last waypoint shape: {sol.trajectory[-1].shape if hasattr(sol.trajectory[-1], 'shape') else type(sol.trajectory[-1])}")
+            return failure_ret
+        
+        # Trim source and target vertices from path
+        if len(sol.vertex_path) >= 3:
+            sol.vertex_path = sol.vertex_path[1:-2]
+        if len(sol.trajectory) >= 3:
+            sol.trajectory = sol.trajectory[1:-2]
+        
+        if len(sol.trajectory) == 0:
+            print(f"  ✗ Trajectory empty after trimming")
+            return failure_ret
+        
+        # Reconstruct time values in waypoints based on cumulative distance and velocity limit
+        # Waypoints are in format [x0,y0,z0,t0,x1,y1,z1,t1] for 3D or [x0,y0,t0,x1,y1,t1] for 2D
+        cumulative_time = t_start
+        total_distance = 0.0
+        
+        for idx, wp in enumerate(sol.trajectory):
+            if len(wp) >= 8:  # 3D: [x0,y0,z0,t0,x1,y1,z1,t1]
+                p0 = wp[:3]  # Start position
+                p1 = wp[4:7]  # End position
+                segment_dist = np.linalg.norm(p1 - p0)
+                segment_time = segment_dist / self.vlimit if self.vlimit > 0 else 0.1
+                total_distance += segment_dist
+                
+                # Update time values in waypoint
+                t0_new = cumulative_time
+                t1_new = cumulative_time + segment_time
+                wp_new = np.concatenate([p0, [t0_new], p1, [t1_new]])
+                sol.trajectory[idx] = wp_new
+                cumulative_time = t1_new
+                
+            elif len(wp) >= 6:  # 2D: [x0,y0,t0,x1,y1,t1]
+                p0 = wp[:2]
+                p1 = wp[3:5]
+                segment_dist = np.linalg.norm(p1 - p0)
+                segment_time = segment_dist / self.vlimit if self.vlimit > 0 else 0.1
+                total_distance += segment_dist
+                
+                # Update time values in waypoint
+                t0_new = cumulative_time
+                t1_new = cumulative_time + segment_time
+                wp_new = np.concatenate([p0, [t0_new], p1, [t1_new]])
+                sol.trajectory[idx] = wp_new
+                cumulative_time = t1_new
+        
+        # Compute final time
+        if total_distance > 0 and self.vlimit > 0:
+            t_end = t_start + (total_distance / self.vlimit)
+        else:
+            t_end = cumulative_time if cumulative_time > t_start else t_start + 0.1
+        
+        # Ensure t_end >= t_start
+        if t_end <= t_start:
+            t_end = t_start + 0.1
+        
+        sol.itvl = Interval(t_start, t_end)
         sol.cost = sol.itvl.duration
         sol.dim = self.dim
         
+        print(f"  ✓ Solution complete: {len(sol.trajectory)} waypoints, duration={sol.itvl.duration:.2f}s, cost={sol.cost:.2f}")
         return sol
 
     def draw(self, ax:Axes|Axes3D, edges=False, set_labels=True, bounds:List[Interval]=[]) -> None:

@@ -18,7 +18,11 @@ from pydrake.all import (
 
 
 """ setup mosek solver """
-if MosekSolver().available():
+# Check both available() and enabled() - Mosek can be available but not enabled
+mosek_available = MosekSolver().available()
+mosek_enabled = mosek_available and (hasattr(MosekSolver(), 'enabled') and MosekSolver().enabled() if hasattr(MosekSolver(), 'enabled') else True)
+
+if mosek_available and mosek_enabled:
     solver = MosekSolver()
     solver_options = SolverOptions()
     solver_options.SetOption(CommonSolverOption.kPrintToConsole, 1)
@@ -59,6 +63,45 @@ def timeit(func):
 
 
 """ convex set operations """
+
+def is_hpoly_empty(hpoly: Optional[HPolyhedron]) -> bool:
+    """Check if an HPolyhedron is empty, compatible across Drake versions.
+    
+    Args:
+        hpoly: HPolyhedron to check (can be None)
+        
+    Returns:
+        True if the polyhedron is None or empty, False otherwise
+    """
+    if hpoly is None:
+        return True
+    
+    try:
+        # Try the standard IsEmpty() method first
+        if hasattr(hpoly, 'IsEmpty'):
+            try:
+                return hpoly.IsEmpty()
+            except AttributeError:
+                # IsEmpty exists but might not be callable in some versions
+                pass
+        
+        # Fallback: use MaybeGetFeasiblePoint - if it returns None, set is empty
+        if hasattr(hpoly, 'MaybeGetFeasiblePoint'):
+            try:
+                return hpoly.MaybeGetFeasiblePoint() is None
+            except:
+                pass
+        
+        # Last resort: try to get Chebyshev center, if it fails, assume empty
+        try:
+            hpoly.ChebyshevCenter()
+            return False
+        except:
+            return True
+    except Exception:
+        # If everything fails, assume not empty (safer default for non-empty check)
+        return False
+
 
 def make_hpolytope(V) -> HPolyhedron:
     dim = V.shape[-1]

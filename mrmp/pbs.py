@@ -42,11 +42,16 @@ class Node:
                         break
             
             if replan:
+                print(f"\t  Replanning Agent {j}...")
+                if high_priority_agents:
+                    print(f"\t  Higher priority agents: {high_priority_agents}")
                 stgcs_reserved = stgcs.copy()
                 for k in high_priority_agents:
+                    print(f"\t  Reserving space-time region for Agent {k}")
                     stgcs_reserved = ecd_reserve(stgcs_reserved, self.sols[k].trajectory, 2 * robot_radius)
                     
                 scaler = np.clip(np.log(stgcs_reserved.G.n_edges), 1, 10) * scaler_multiplier
+                print(f"\t  Calling STGCS.solve() for Agent {j} (start={starts[j]}, goal={goals[j]})")
                 sol = stgcs_reserved.solve(
                         starts[j], goals[j], t0s[j],
                         relaxation=True,
@@ -55,11 +60,11 @@ class Node:
                     )
                 
                 if not sol.is_success:
-                    print(f"\t\u2713 Fails to update plan for {j} using STGCS: |V|={stgcs_reserved.G.n_vertices}, |E|={stgcs_reserved.G.n_edges}, |rounded_paths|={int(BASE_MAX_ROUNDED_PATHS * scaler)}")
+                    print(f"\t✗ Fails to update plan for Agent {j} using STGCS: |V|={stgcs_reserved.G.n_vertices}, |E|={stgcs_reserved.G.n_edges}, |rounded_paths|={int(BASE_MAX_ROUNDED_PATHS * scaler)}")
                     return False
                 self.sols[j] = sol
                 self._stgcs_num_edges.append(stgcs_reserved.G.n_edges)
-                print(f"\t\u2713 Succeeds to update plan for {j} using STGCS: |V|={stgcs_reserved.G.n_vertices}, |E|={stgcs_reserved.G.n_edges}, |rounded_paths|={int(BASE_MAX_ROUNDED_PATHS * scaler)}")
+                print(f"\t✓ Succeeds to update plan for Agent {j} using STGCS: |V|={stgcs_reserved.G.n_vertices}, |E|={stgcs_reserved.G.n_edges}, cost={sol.cost:.2f}, duration={sol.itvl.duration:.2f}s")
 
         return True
 
@@ -110,7 +115,9 @@ def PBS(
 
     print(f"\n-> PBS: initial STGCS: |V|={stgcs.G.n_vertices}, |E|={stgcs.G.n_edges}, |rounded_paths|={int(BASE_MAX_ROUNDED_PATHS * scaler)}")
     
-    for start, goal, t0 in zip(starts, goals, t0s):
+    for agent_idx, (start, goal, t0) in enumerate(zip(starts, goals, t0s)):
+        print(f"\n-> PBS: Planning initial path for Agent {agent_idx}")
+        print(f"    Start: {start}, Goal: {goal}, t0: {t0}")
         sol = stgcs.solve(
             start, goal, t0,
             relaxation=True,
@@ -118,8 +125,10 @@ def PBS(
             max_rounding_trials = int(BASE_MAX_ROUNDED_PATHS  * scaler),
         )
         if not sol.is_success:
-            print("\n-> PBS:intial solution not found")
+            print(f"\n-> PBS: Initial solution not found for Agent {agent_idx}")
+            print(f"    This means STGCS could not find a path from {start} to {goal}")
             return [], -1
+        print(f"    ✓ Agent {agent_idx} initial path found: cost={sol.cost:.2f}, duration={sol.itvl.duration:.2f}s")
         root.sols.append(sol)
         root._stgcs_num_edges.append(stgcs.G.n_edges)
     
@@ -132,11 +141,13 @@ def PBS(
 
         ci, cj = node.find_first_conflict(num_agents, env.robot_radius, tmin=T_MIN, tmax=tmax)
         if ci is None:
-            print(f"\nPBS: Successfully found a valid set of plans: {node}")
+            print(f"\n✓ PBS: Successfully found a valid set of plans: {node}")
+            print(f"   All agents have collision-free paths!")
             return node.sols, np.mean(node._stgcs_num_edges)
         
         print(f"\n-> PBS: Current node = {str(node)}")
-        print(f"-> PBS: Found conflict between {ci} and {cj}")
+        print(f"-> PBS: Found conflict between Agent {ci} and Agent {cj}")
+        print(f"   Checking trajectories for collision...")
 
         for i, j in [(ci, cj), (cj, ci)]:
             child = node.get_child(i, j)
@@ -161,8 +172,10 @@ def collision_checking(
         return collision_checking_1d(pi_a, pi_b, robot_radius, tmin, tmax)
     elif pi_a[0].shape[0] == 6:
         return collision_checking_2d(pi_a, pi_b, robot_radius, tmin, tmax)
+    elif pi_a[0].shape[0] == 8:
+        return collision_checking_3d(pi_a, pi_b, robot_radius, tmin, tmax)
     else:
-        raise ValueError("collision_checking: unsupported dimension")
+        raise ValueError(f"collision_checking: unsupported dimension {pi_a[0].shape[0]}")
 
 
 def collision_checking_1d(
@@ -198,6 +211,26 @@ def collision_checking_2d(
     for xy_a, xy_b in product(_a_t0 + pi_a + _a_tf, _b_t0 + pi_b + _b_tf):
         xa, ya = xy_a[:3], xy_a[3:]
         xb, yb = xy_b[:3], xy_b[3:]
+        val = min_dist_squared(xa, ya, xb, yb) - (2 * robot_radius)**2
+        if not np.allclose(val, 0) and val < 0:
+            return True
+
+    return False
+
+
+def collision_checking_3d(
+    pi_a:List[np.ndarray], pi_b:List[np.ndarray], 
+    robot_radius:float, tmin:float, tmax:float
+) -> bool:
+    """3D collision checking: waypoint format [x0, y0, z0, t0, x1, y1, z1, t1]"""
+    _a_t0 = [np.concatenate([pi_a[0][0:3], [tmin], pi_a[0][:4]])]
+    _a_tf = [np.concatenate([pi_a[-1][-4:], pi_a[-1][-4:-1], [tmax]])]
+    _b_t0 = [np.concatenate([pi_b[0][0:3], [tmin], pi_b[0][:4]])]
+    _b_tf = [np.concatenate([pi_b[-1][-4:], pi_b[-1][-4:-1], [tmax]])]
+    
+    for xyz_a, xyz_b in product(_a_t0 + pi_a + _a_tf, _b_t0 + pi_b + _b_tf):
+        xa, ya = xyz_a[:4], xyz_a[4:]  # [x0,y0,z0,t0] and [x1,y1,z1,t1]
+        xb, yb = xyz_b[:4], xyz_b[4:]
         val = min_dist_squared(xa, ya, xb, yb) - (2 * robot_radius)**2
         if not np.allclose(val, 0) and val < 0:
             return True

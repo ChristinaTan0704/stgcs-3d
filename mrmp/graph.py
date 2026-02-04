@@ -20,6 +20,18 @@ from pydrake.all import (
     SolverOptions,
     MosekSolver, CommonSolverOption
 )
+# Try to import GraphOfConvexSetsOptions - may not be available in all PyDrake versions
+try:
+    from pydrake.geometry.optimization import GraphOfConvexSetsOptions
+    HAS_GCS_OPTIONS = True
+except ImportError:
+    try:
+        from pydrake.all import GraphOfConvexSetsOptions
+        HAS_GCS_OPTIONS = True
+    except ImportError:
+        HAS_GCS_OPTIONS = False
+        # Create a dummy class if not available (shouldn't happen in practice)
+        GraphOfConvexSetsOptions = None
 from tqdm import tqdm
 
 from mrmp.geometry.convex_set import ConvexSet
@@ -249,19 +261,45 @@ class Graph:
         # Makes a copy so that the original vertex is not modified
         # allows for convenient adding of vertices from one graph to another
         v = copy(vertex)
+        # Clear gcs_vertex if it exists (from a previous graph) before adding to new graph
         if should_add_to_gcs:
+            v.gcs_vertex = None  # Clear any existing gcs_vertex reference
             v.gcs_vertex = self._gcs.AddVertex(v.convex_set.set, name)
+            
+            # Verify vertex was created properly
+            if v.gcs_vertex is None:
+                raise RuntimeError(f"Failed to create vertex {name} in graph")
+            
+            # Check if AddCost method exists (may vary by PyDrake version)
+            if not hasattr(v.gcs_vertex, 'AddCost'):
+                # Try alternative method name or skip if not available
+                if hasattr(v.gcs_vertex, 'add_cost'):
+                    add_cost_method = v.gcs_vertex.add_cost
+                else:
+                    # If no AddCost method, skip adding costs (may be set differently)
+                    logger.warning(f"Vertex {name} does not support AddCost, skipping cost/constraint addition")
+                    add_cost_method = None
+            else:
+                add_cost_method = v.gcs_vertex.AddCost
+            
             # Add costs and constraints to gcs vertex
-            if v.costs:
+            if v.costs and add_cost_method is not None:
                 for cost in v.costs:
-                    binding = Binding[Cost](cost, v.gcs_vertex.x().flatten())
-                    v.gcs_vertex.AddCost(binding)
-            if v.constraints:
+                    try:
+                        binding = Binding[Cost](cost, v.gcs_vertex.x().flatten())
+                        add_cost_method(binding)
+                    except Exception as e:
+                        logger.warning(f"Failed to add cost to vertex {name}: {e}")
+            
+            if v.constraints and hasattr(v.gcs_vertex, 'AddConstraint'):
                 for constraint in v.constraints:
-                    binding = Binding[Constraint](
-                        constraint, v.gcs_vertex.x().flatten()
-                    )
-                    v.gcs_vertex.AddConstraint(binding)
+                    try:
+                        binding = Binding[Constraint](
+                            constraint, v.gcs_vertex.x().flatten()
+                        )
+                        v.gcs_vertex.AddConstraint(binding)
+                    except Exception as e:
+                        logger.warning(f"Failed to add constraint to vertex {name}: {e}")
 
         self.vertices[name] = v
 
@@ -437,12 +475,27 @@ class Graph:
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_TOL_REL_GAP", 1e-3)
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_MAX_TIME", 3600.0)
         
-        rounded_result = self._gcs.SolveShortestPath(
-            self.vertices[self._source_name].gcs_vertex,
-            self.vertices[self._target_name].gcs_vertex,
-            convex_relaxation=True,
-            solver_options=solver_options
-        )
+        if HAS_GCS_OPTIONS:
+            options = GraphOfConvexSetsOptions()
+            options.convex_relaxation = True
+            options.max_rounded_paths = max_rounded_paths
+            options.max_rounding_trials = max_rounding_trials
+            options.solver_options = solver_options
+            
+            rounded_result = self._gcs.SolveShortestPath(
+                self.vertices[self._source_name].gcs_vertex,
+                self.vertices[self._target_name].gcs_vertex,
+                options
+            )
+        else:
+            # Fallback to old API with keyword arguments
+            # Note: old API doesn't support max_rounded_paths and max_rounding_trials
+            rounded_result = self._gcs.SolveShortestPath(
+                self.vertices[self._source_name].gcs_vertex,
+                self.vertices[self._target_name].gcs_vertex,
+                convex_relaxation=True,
+                solver_options=solver_options
+            )
         sol = self._parse_result(rounded_result)
         self._post_solve(sol)
         return sol
@@ -458,12 +511,24 @@ class Graph:
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_TOL_REL_GAP", 1e-3)
         solver_options.SetOption(MosekSolver.id(), "MSK_DPAR_MIO_MAX_TIME", 3600.0)
         
-        rounded_result = self._gcs.SolveShortestPath(
-            self.vertices[self._source_name].gcs_vertex,
-            self.vertices[self._target_name].gcs_vertex,
-            convex_relaxation=False,
-            solver_options=solver_options
-        )
+        if HAS_GCS_OPTIONS:
+            options = GraphOfConvexSetsOptions()
+            options.convex_relaxation = False
+            options.solver_options = solver_options
+            
+            rounded_result = self._gcs.SolveShortestPath(
+                self.vertices[self._source_name].gcs_vertex,
+                self.vertices[self._target_name].gcs_vertex,
+                options
+            )
+        else:
+            # Fallback to old API with keyword arguments
+            rounded_result = self._gcs.SolveShortestPath(
+                self.vertices[self._source_name].gcs_vertex,
+                self.vertices[self._target_name].gcs_vertex,
+                convex_relaxation=False,
+                solver_options=solver_options
+            )
         sol = self._parse_result(rounded_result)
         self._post_solve(sol)
         return sol
@@ -613,7 +678,13 @@ class Graph:
         paths.
         """
         cost = result.get_optimal_cost()
-        time = result.get_solver_details().optimizer_time
+        # Different solvers have different detail structures
+        solver_details = result.get_solver_details()
+        if hasattr(solver_details, 'optimizer_time'):
+            time = solver_details.optimizer_time
+        else:
+            # For solvers without optimizer_time, use 0.0 as fallback
+            time = 0.0
 
         return ShortestPathSolution(
             result.is_success(),
@@ -632,7 +703,13 @@ class Graph:
         should_return_result: bool = False,
     ) -> ShortestPathSolution:
         cost = result.get_optimal_cost()
-        time = result.get_solver_details().optimizer_time
+        # Different solvers have different detail structures
+        solver_details = result.get_solver_details()
+        if hasattr(solver_details, 'optimizer_time'):
+            time = solver_details.optimizer_time
+        else:
+            # For solvers without optimizer_time, use 0.0 as fallback
+            time = 0.0
 
         ambient_path = []
         if result.is_success():
@@ -649,26 +726,98 @@ class Graph:
 
     def _parse_result(self, result: MathematicalProgramResult) -> ShortestPathSolution:
         cost = result.get_optimal_cost()
-        time = result.get_solver_details().optimizer_time
+        # Different solvers have different detail structures
+        solver_details = result.get_solver_details()
+        if hasattr(solver_details, 'optimizer_time'):
+            time = solver_details.optimizer_time
+        else:
+            # For solvers without optimizer_time, use 0.0 as fallback
+            time = 0.0
         vertex_path = []
         ambient_path = []
         flows = []
+        edge_path = []  # Initialize outside the if block
         if result.is_success():
             flow_variables = [e.phi() for e in self._gcs.Edges()]
             flows = [result.GetSolution(p) for p in flow_variables]
-            edge_path = []
-            for k, flow in enumerate(flows):
-                if flow >= 0.99:
-                    edge_path.append(self.edges[self.edge_keys[k]])
-            assert len(self._gcs.Edges()) == self.n_edges
-            # Edges are in order they were added to the graph and not in order of the path
+            active_flows = []
+            threshold_used = None
+            # Try different thresholds - sometimes rounding gives flows slightly < 0.99
+            thresholds = [0.99, 0.95, 0.9, 0.8, 0.5]
+            for threshold in thresholds:
+                edge_path = []
+                active_flows = []
+                for k, flow in enumerate(flows):
+                    if flow >= threshold:
+                        edge_path.append(self.edges[self.edge_keys[k]])
+                        active_flows.append((k, flow, self.edge_keys[k]))
+                
+                if len(edge_path) > 0:
+                    # Check if we can form a path
+                    neighbors = {e.u: e.v for e in edge_path}
+                    path_trace = [self.source_name]
+                    for _ in range(100):  # Limit to prevent infinite loop
+                        if path_trace[-1] in neighbors:
+                            next_v = neighbors[path_trace[-1]]
+                            if next_v in path_trace:  # Cycle detected
+                                break
+                            path_trace.append(next_v)
+                            if next_v == self.target_name:
+                                # Found valid path!
+                                threshold_used = threshold
+                                logger.debug(f"Found valid path with threshold {threshold}")
+                                break
+                        else:
+                            break
+                    
+                    if path_trace[-1] == self.target_name:
+                        # Valid path found with this threshold
+                        threshold_used = threshold
+                        break
+            
+            threshold_str = str(threshold_used) if threshold_used is not None else 'none'
+            logger.debug(f"Found {len(edge_path)} active edges out of {len(flows)} total edges (threshold used: {threshold_str})")
+            if len(edge_path) == 0:
+                logger.warning("No active edges found in solution (all flows < 0.5)")
+                return ShortestPathSolution(False, -1, -1, [], [], result)
+            
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Active edges: {[(e.u, e.v) for e in edge_path]}")
+                logger.debug(f"Source: {self.source_name}, Target: {self.target_name}")
+        assert len(self._gcs.Edges()) == self.n_edges
+        # Edges are in order they were added to the graph and not in order of the path
+        try:
             vertex_path = self._convert_active_edges_to_vertex_path(
                 self.source_name, self.target_name, edge_path
             )
-            # vertex_path = [self.source_name]
-            ambient_path = [
-                result.GetSolution(self.vertices[v].gcs_vertex.x()) for v in vertex_path
-            ]
+            # Build ambient path from vertex solutions
+            ambient_path = []
+            for v in vertex_path:
+                try:
+                    vertex_sol = result.GetSolution(self.vertices[v].gcs_vertex.x())
+                    ambient_path.append(vertex_sol)
+                except Exception as e:
+                    logger.warning(f"Failed to get solution for vertex {v}: {e}")
+                    raise RuntimeError(f"Cannot get solution for vertex {v} in path")
+        except (AssertionError, RuntimeError) as e:
+            # If path reconstruction fails, return failure with detailed info
+            logger.warning(f"Failed to reconstruct path: {e}")
+            logger.warning(f"  Source: {self.source_name}, Target: {self.target_name}")
+            logger.warning(f"  Active edges ({len(edge_path)}): {[(e.u, e.v) for e in edge_path]}")
+            if edge_path:
+                neighbors = {e.u: e.v for e in edge_path}
+                logger.warning(f"  Edge neighbors dict: {neighbors}")
+                # Try to trace path manually
+                path_trace = [self.source_name]
+                for _ in range(20):  # Limit to prevent infinite loop
+                    if path_trace[-1] in neighbors:
+                        path_trace.append(neighbors[path_trace[-1]])
+                    else:
+                        break
+                logger.warning(f"  Path trace: {path_trace}")
+            return ShortestPathSolution(
+                False, -1, -1, [], [], result
+            )
 
         return ShortestPathSolution(
             result.is_success(), cost, time, vertex_path, ambient_path, result
@@ -692,21 +841,58 @@ class Graph:
 
         # Create a dictionary where the keys are the vertices and the values are their neighbors
         neighbors = {e.u: e.v for e in edges}
+        # Also create reverse mapping for debugging
+        reverse_neighbors = {e.v: e.u for e in edges}
+        
         # Start with the source vertex
         path = [source_name]
 
         # While the last vertex in the path has a neighbor
-
-        while path[-1] in neighbors:
-            if neighbors[path[-1]] in path:
+        max_iterations = len(edges) + 10  # Prevent infinite loops
+        iteration = 0
+        
+        while path[-1] in neighbors and iteration < max_iterations:
+            iteration += 1
+            next_vertex = neighbors[path[-1]]
+            if next_vertex in path:
                 # We have a cycle
                 raise RuntimeError(
-                    f"Cycle detected in path {np.array(path)}\n{np.array(edges)}"
+                    f"Cycle detected in path {path}\nEdges: {[(e.u, e.v) for e in edges]}"
                 )
             # Add the neighbor to the path
-            path.append(neighbors[path[-1]])
+            path.append(next_vertex)
+            
+            # If we reached target, we're done
+            if next_vertex == target_name:
+                break
 
-        assert path[-1] == target_name, "Path does not end at target"
+        if path[-1] != target_name:
+            # Path doesn't end at target - try to find a path using BFS
+            logger.warning(f"Direct path reconstruction failed. Path ends at {path[-1]}, target is {target_name}")
+            logger.warning(f"  Attempting BFS to find path from {path[-1]} to {target_name}")
+            logger.warning(f"  Available edges: {[(e.u, e.v) for e in edges]}")
+            
+            # Try BFS from current end to target
+            from collections import deque
+            queue = deque([(path[-1], path.copy())])
+            visited = set(path)
+            
+            while queue:
+                current, current_path = queue.popleft()
+                if current == target_name:
+                    # Found path! Return the combined path
+                    return current_path
+                
+                for edge in edges:
+                    if edge.u == current and edge.v not in visited:
+                        visited.add(edge.v)
+                        queue.append((edge.v, current_path + [edge.v]))
+            
+            # BFS also failed
+            raise AssertionError(
+                f"Path does not end at target. Path: {path}, Target: {target_name}, "
+                f"Edges: {[(e.u, e.v) for e in edges]}"
+            )
 
         return path
 

@@ -16,7 +16,7 @@ from mrmp.graph import ShortestPathSolution, Edge, Graph, Vertex
 from mrmp.interval import Interval, AABB
 from mrmp.utils import (
     timeit, get_hpoly_bounds, squash_multi_points, find_space_time_intersecting_pts,
-    draw_2d_set, draw_3d_set, draw_cuboid, draw_parallelpiped,
+    draw_2d_set, draw_3d_set, draw_cuboid, draw_parallelpiped, is_hpoly_empty,
 )
 
 
@@ -122,6 +122,8 @@ def generate_all_ECD_pairs(
         halfspace_func = parallelepiped_side_halfspace_1d
     elif dim == 3:
         halfspace_func = parallelepiped_side_halfspace_2d
+    elif dim == 4:
+        halfspace_func = parallelepiped_side_halfspace_3d
     else:
         raise ValueError(f"Unsupported dimension {dim}")
     
@@ -164,10 +166,10 @@ def slice(hpoly:Optional[HPolyhedron], ecd_pairs:List[ECDPair], tlow:float, thig
     
     ret = []
     bot = ecd_pairs[0].bottom_halfspace.Intersection(hpoly)
-    if bot is not None and not bot.IsEmpty():
+    if bot is not None and not is_hpoly_empty(bot):
         ret.append((bot, Interval(tlow, ecd_pairs[0].bounds[-1].start)))
     top = ecd_pairs[-1].top_halfspace.Intersection(hpoly)
-    if top is not None and not top.IsEmpty():
+    if top is not None and not is_hpoly_empty(top):
         ret.append((top, Interval(ecd_pairs[-1].bounds[-1].end, thigh)))
 
     # merge pairs if they have the same direction
@@ -179,12 +181,12 @@ def slice(hpoly:Optional[HPolyhedron], ecd_pairs:List[ECDPair], tlow:float, thig
         mid = time_cropping_mid(hpoly, mid_tlow, mid_thigh)
         
         for out_halfspace in ecd_pair.mid_halfspaces:
-            if mid is None or mid.IsEmpty():
+            if mid is None or is_hpoly_empty(mid):
                 break
 
             in_halfspace = HPolyhedron(-out_halfspace.A(), -out_halfspace.b())
             new_set = mid.Intersection(out_halfspace)
-            if not new_set.IsEmpty():
+            if not is_hpoly_empty(new_set):
                 mid = mid.Intersection(in_halfspace)
                 itvl = Interval(*get_hpoly_bounds(new_set, dim=-1))
                 ret.append((new_set, itvl))
@@ -250,35 +252,87 @@ def parallelepiped_side_halfspace_1d(
 
 def parallelepiped_side_halfspace_2d(
     xp:np.ndarray, xq:np.ndarray, halfsize:float,
-) -> List[Tuple[HPolyhedron, HPolyhedron]]:
-    p_facet_verts = np.array(                                       # 3 -- e2 -- 2                      
-                    [[xp[0] - halfsize, xp[1] - halfsize, xp[2]],   # |          |
-                     [xp[0] + halfsize, xp[1] - halfsize, xp[2]],   # e3         e1
-                     [xp[0] + halfsize, xp[1] + halfsize, xp[2]],   # |          |
-                     [xp[0] - halfsize, xp[1] + halfsize, xp[2]]])  # 0 -- e0 -- 1                                                                               
-    q_facet_verts = np.array(
-                    [[xq[0] - halfsize, xq[1] - halfsize, xq[2]],   
-                     [xq[0] + halfsize, xq[1] - halfsize, xq[2]],
-                     [xq[0] + halfsize, xq[1] + halfsize, xq[2]],
-                     [xq[0] - halfsize, xq[1] + halfsize, xq[2]]])
-    edges = [[0, 1], [1, 2], [2, 3], [0, 3]]
+) -> List[HPolyhedron]:
+    """
+    Generate halfspaces for 2D space (x, y) partitioning in 3D space-time (x, y, t).
+    For 2D space, creates 2 halfspaces (left/right) around the moving line segment.
+    xp, xq are in space-time: [x, y, t]
+    """
+    p_line = np.array([[xp[0] - halfsize, xp[1]], [xp[0] + halfsize, xp[1]]])
+    q_line = np.array([[xq[0] - halfsize, xq[1]], [xq[0] + halfsize, xq[1]]])
 
     center = (xp + xq) / 2
     halfspaces = []
-    for simplex in edges:
-        u, v = simplex
-        # get plane (ax + by + cz + d = 0) from 3 points
-        p1, p2, p3 = p_facet_verts[u], p_facet_verts[v], q_facet_verts[u]
-        v1, v2 = p2 - p1, p3 - p1
-        normal = np.cross(v1, v2)
-        a, b, c = normal
-        d = -np.dot(normal, p1)
-        # if A·center > b then the halfspace without center is A·x <= b - eps; otherwise -A·x <= -(b - eps)
-        A, b = np.array([[a, b, c]]), np.array([[-d]])
-        if np.dot(center, A[0]) + d > 0:
+    for p1, p2 in zip(p_line, q_line):
+        vec = p2 - p1
+        normal_2d = np.hstack([vec[1], -vec[0]]).reshape(1, -1)
+        c = -np.dot(normal_2d, p1)
+        # Extend to space-time: [nx, ny, 0] @ [x, y, t] <= -c
+        A = np.hstack([normal_2d, np.array([[0]])])
+        b = np.array([[-c]]).reshape(-1, 1)  # Ensure shape is (1, 1)
+        if np.dot(center[:2], normal_2d[0]) + c > 0:
             halfspaces.append(HPolyhedron(A, b))
         else:
             halfspaces.append(HPolyhedron(-A, -b))
+    
+    return halfspaces
+
+
+def parallelepiped_side_halfspace_3d(
+    xp:np.ndarray, xq:np.ndarray, halfsize:float,
+) -> List[HPolyhedron]:
+    """
+    Generate 6 halfspaces for 3D space (x, y, z) partitioning in 4D space-time (x, y, z, t).
+    Like split_region.py: top, bottom, left, right, front, back relative to the moving cube.
+    
+    xp, xq are in space-time: [x, y, z, t]
+    Returns 6 halfspaces in 4D space-time that partition 3D space around the moving cube.
+    """
+    # Compute bounding box of the moving cube in spatial dimensions
+    x_min = min(xp[0], xq[0]) - halfsize
+    x_max = max(xp[0], xq[0]) + halfsize
+    y_min = min(xp[1], xq[1]) - halfsize
+    y_max = max(xp[1], xq[1]) + halfsize
+    z_min = min(xp[2], xq[2]) - halfsize
+    z_max = max(xp[2], xq[2]) + halfsize
+    
+    halfspaces = []
+    
+    # 1. Top halfspace: z >= z_max (space above the cube)
+    # In 4D space-time: [0, 0, -1, 0] @ [x, y, z, t] <= -z_max  =>  z >= z_max
+    A_top = np.array([[0, 0, -1, 0]])
+    b_top = np.array([[-z_max]]).reshape(-1, 1)
+    halfspaces.append(HPolyhedron(A_top, b_top))
+    
+    # 2. Bottom halfspace: z <= z_min (space below the cube)
+    # In 4D space-time: [0, 0, 1, 0] @ [x, y, z, t] <= z_min
+    A_bottom = np.array([[0, 0, 1, 0]])
+    b_bottom = np.array([[z_min]]).reshape(-1, 1)
+    halfspaces.append(HPolyhedron(A_bottom, b_bottom))
+    
+    # 3. Left halfspace: x <= x_min (space to the left of the cube)
+    # In 4D space-time: [1, 0, 0, 0] @ [x, y, z, t] <= x_min
+    A_left = np.array([[1, 0, 0, 0]])
+    b_left = np.array([[x_min]]).reshape(-1, 1)
+    halfspaces.append(HPolyhedron(A_left, b_left))
+    
+    # 4. Right halfspace: x >= x_max (space to the right of the cube)
+    # In 4D space-time: [-1, 0, 0, 0] @ [x, y, z, t] <= -x_max  =>  x >= x_max
+    A_right = np.array([[-1, 0, 0, 0]])
+    b_right = np.array([[-x_max]]).reshape(-1, 1)
+    halfspaces.append(HPolyhedron(A_right, b_right))
+    
+    # 5. Front halfspace: y <= y_min (space in front of the cube)
+    # In 4D space-time: [0, 1, 0, 0] @ [x, y, z, t] <= y_min
+    A_front = np.array([[0, 1, 0, 0]])
+    b_front = np.array([[y_min]]).reshape(-1, 1)
+    halfspaces.append(HPolyhedron(A_front, b_front))
+    
+    # 6. Back halfspace: y >= y_max (space behind the cube)
+    # In 4D space-time: [0, -1, 0, 0] @ [x, y, z, t] <= -y_max  =>  y >= y_max
+    A_back = np.array([[0, -1, 0, 0]])
+    b_back = np.array([[-y_max]]).reshape(-1, 1)
+    halfspaces.append(HPolyhedron(A_back, b_back))
     
     return halfspaces
 

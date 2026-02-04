@@ -188,20 +188,52 @@ class Tree:
         return path[::-1] if self._type == Tree.START_TREE else path
 
     def draw_2d(self, ax:Axes, color:str, with_time:bool=False) -> None:
+        """Draw tree - supports 2D and 3D space"""
         if not self._root.is_dummy:
             if with_time:
-                ax.plot([self._root.state.pos[0]], [self._root.state.pos[1]], [self._root.state.time], f'{color}x')
+                if len(self._root.state.pos) == 2:
+                    ax.plot([self._root.state.pos[0]], [self._root.state.pos[1]], [self._root.state.time], f'{color}x')
+                elif len(self._root.state.pos) == 3:
+                    # For 3D space, use 3D plot
+                    from mpl_toolkits.mplot3d import Axes3D
+                    if isinstance(ax, Axes3D):
+                        ax.plot([self._root.state.pos[0]], [self._root.state.pos[1]], [self._root.state.pos[2]], f'{color}x')
             else:
-                ax.plot([self._root.state.pos[0]], [self._root.state.pos[1]], f'{color}x')
+                if len(self._root.state.pos) == 2:
+                    ax.plot([self._root.state.pos[0]], [self._root.state.pos[1]], f'{color}x')
+                elif len(self._root.state.pos) == 3:
+                    from mpl_toolkits.mplot3d import Axes3D
+                    if isinstance(ax, Axes3D):
+                        ax.plot([self._root.state.pos[0]], [self._root.state.pos[1]], [self._root.state.pos[2]], f'{color}x')
         for node in self._nodes:
             if node.parent is not None and not node.parent.is_dummy:
                 parent_state = node.parent.state
                 if with_time:
-                    ax.plot([node.state.pos[0], parent_state.pos[0]], [node.state.pos[1], parent_state.pos[1]], [node.state.time, parent_state.time], f'.{color}--')
+                    if len(node.state.pos) == 2:
+                        ax.plot([node.state.pos[0], parent_state.pos[0]], [node.state.pos[1], parent_state.pos[1]], [node.state.time, parent_state.time], f'.{color}--')
+                    elif len(node.state.pos) == 3:
+                        from mpl_toolkits.mplot3d import Axes3D
+                        if isinstance(ax, Axes3D):
+                            ax.plot([node.state.pos[0], parent_state.pos[0]], [node.state.pos[1], parent_state.pos[1]], [node.state.pos[2], parent_state.pos[2]], f'.{color}--')
                 else:
-                    ax.plot([node.state.pos[0], parent_state.pos[0]], [node.state.pos[1], parent_state.pos[1]], f'.{color}--')
+                    if len(node.state.pos) == 2:
+                        ax.plot([node.state.pos[0], parent_state.pos[0]], [node.state.pos[1], parent_state.pos[1]], f'.{color}--')
+                    elif len(node.state.pos) == 3:
+                        from mpl_toolkits.mplot3d import Axes3D
+                        if isinstance(ax, Axes3D):
+                            ax.plot([node.state.pos[0], parent_state.pos[0]], [node.state.pos[1], parent_state.pos[1]], [node.state.pos[2], parent_state.pos[2]], f'.{color}--')
             else:
                 if with_time:
-                    ax.plot([node.state.pos[0]], [node.state.pos[1]], [node.state.time], f'.{color}--')
+                    if len(node.state.pos) == 2:
+                        ax.plot([node.state.pos[0]], [node.state.pos[1]], [node.state.time], f'.{color}--')
+                    elif len(node.state.pos) == 3:
+                        from mpl_toolkits.mplot3d import Axes3D
+                        if isinstance(ax, Axes3D):
+                            ax.plot([node.state.pos[0]], [node.state.pos[1]], [node.state.pos[2]], f'.{color}--')
                 else:
-                    ax.plot([node.state.pos[0]], [node.state.pos[1]], f'.{color}--')
+                    if len(node.state.pos) == 2:
+                        ax.plot([node.state.pos[0]], [node.state.pos[1]], f'.{color}--')
+                    elif len(node.state.pos) == 3:
+                        from mpl_toolkits.mplot3d import Axes3D
+                        if isinstance(ax, Axes3D):
+                            ax.plot([node.state.pos[0]], [node.state.pos[1]], [node.state.pos[2]], f'.{color}--')

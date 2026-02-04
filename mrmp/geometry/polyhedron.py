@@ -19,6 +19,7 @@ from mrmp.geometry.geometry_utils import (
     order_vertices_counter_clockwise,
 )
 from mrmp.geometry.nullspace_set import NullspaceSet
+from mrmp.utils import is_hpoly_empty
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class Polyhedron(ConvexSet):
         self._h = h
 
         if should_compute_vertices:
-            if H.shape[1] == 1 or self._h_polyhedron.IsEmpty():
+            if H.shape[1] == 1 or is_hpoly_empty(self._h_polyhedron):
                 logger.warning("Polyhedron is empty or 1D, skipping compute vertices")
                 return
 
@@ -68,7 +69,7 @@ class Polyhedron(ConvexSet):
         # logger.debug(f"H size before: {self._h_polyhedron.A().shape}")
         # self._h_polyhedron = self._h_polyhedron.ReduceInequalities(tol=0)
         # logger.debug(f"H size after: {self._h_polyhedron.A().shape}")
-        if self._h_polyhedron.IsEmpty():
+        if is_hpoly_empty(self._h_polyhedron):
             logger.warning("Polyhedron is empty, skipping nullspace set creation")
             return
         self._nullspace_set = NullspaceSet.from_hpolyhedron(
